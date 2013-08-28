@@ -1,4 +1,3 @@
-Philogyny.jl
-============
+# Philogyny.jl
 
-Phylogenetics for the love of Julia
+*Phylogenetics for the love of Julia*
