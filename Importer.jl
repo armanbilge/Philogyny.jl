@@ -25,7 +25,7 @@ end
 
 function read_character(importer::Importer)
     skip_space(importer)
-    ch = read(importer)
+    ch::Char = read(importer)
     while importer.has_comments &&
             (ch == importer.start_comment || ch == importer.line_comment)
         skip_comments(importer, ch)
@@ -48,7 +48,7 @@ end
 
 function read(importer::Importer)
     if importer.last_char == '\0'
-        ch = read(importer.reader, Char)
+        ch::Char = read(importer.reader, Char)
     else
         ch = importer.last_char
         importer.last_char = '\0'
@@ -58,7 +58,7 @@ end
 
 function readline(importer::Importer)
     line = IOBuffer(false, true)
-    ch = read(importer)
+    ch::Char = read(importer)
     try
         while ch != '\n' && ch != '\r'
             if importer.has_comments
@@ -87,12 +87,100 @@ function readline(importer::Importer)
 end
 
 function read_sequence(importer::Importer, sequence::IOBuffer, data_type::DataType,
-                           delimiters::String, max_sites::Int, gap_characters::String,
-                           missing_characters::String, match_characters::String
+                           delimiters::Set{Char}, max_sites::Uint, gap_characters::Set{Char},
+                           missing_characters::Set{Char}, match_characters::Set{Char}
                            match_sequence::String)
-
+    ch::Char = read(importer)
+    try
+        n = 0
+        while n < max_sites && !issubset(ch, delimiters)
+            if importer.has_comments && (ch == importer.start_comment || ch == importer.line_comment)
+                skip_comments(importer, ch)
+                ch = read(importer)
+            end
+            if !isspace(ch)
+                ch1::Char = ch
+                if issubset(ch, gap_characters)
+                    ch1 = GAP_CHARACTER
+                elseif issubset(ch, missing_characters)
+                    ch1 = UNKNOWN_CHARACTER
+                elseif issubset(ch, match_characters)
+                    if match_sequence == None
+                        throw ImportException()
+                    end
+                    if n > length(a)
+                        throw ImportException()
+                    end
+                    ch1 = match_sequence[i]
+                end
+                write(sequence, ch1)
+                n += 1
+            end
+            ch = read(importer)
+        end
+    importer.last_delimiter = ch
+    if isspace(importer.last_delimiter)
+        ch = next_character(importer)
+        if issubset(ch, delimiters)
+            importer.last_delimiter = read_character(importer)
+        end
+    end
+    catch ex
+        if ex != EOFError()
+            throw ex
+        end
+    end
 end
-                        
+
+function read_sequence(importer::Importer, sequence::IOBuffer, data_type::DataType,
+                           delimiters::Set{Char}, gap_characters::Set{Char},
+                           missing_characters::Set{Char}, match_characters::Set{Char}
+                           match_sequence::String)
+    ch::Char = read(importer)
+    try
+        n = 0
+        while ch != '\r' && ch != '\n' && !issubset(ch, delimiters)
+            if importer.has_comments
+                if ch == importer.line_comment
+                skip_comments(importer, ch)
+                break
+                elseif ch == start_comment
+
+                end
+            end
+            if !isspace(ch)
+                ch1::Char = ch
+                if issubset(ch, gap_characters)
+                    ch1 = GAP_CHARACTER
+                elseif issubset(ch, missing_characters)
+                    ch1 = UNKNOWN_CHARACTER
+                elseif issubset(ch, match_characters)
+                    if match_sequence == None
+                        throw ImportException()
+                    end
+                    if n > length(a)
+                        throw ImportException()
+                    end
+                    ch1 = match_sequence[i]
+                end
+                write(sequence, ch1)
+                n += 1
+            end
+            ch = read(importer)
+        end
+    importer.last_delimiter = ch
+    if isspace(importer.last_delimiter)
+        ch = next_character(importer)
+        if issubset(ch, delimiters)
+            importer.last_delimiter = read_character(importer)
+        end
+    end
+    catch ex
+        if ex != EOFError()
+            throw ex
+        end
+    end
+end
 
 abstract SequenceImporter <: Importer
 abstract TreeImporter <: Importer
@@ -114,18 +202,20 @@ type PhylipImporter <: SequenceImporter
 end
 
 # Errors
-abstract ImportError <: Exception
-type DuplicateFieldError <: ImportError
+abstract ImportException <: Exception
+
+type ImportError <: ImportException
+type DuplicateFieldError <: ImportException
 end
-type BadFormatError <: ImportError
+type BadFormatError <: ImportException
 end
-type UnparsableDataError <: ImportError
+type UnparsableDataError <: ImportException
 end
-type MissingFieldError <: ImportError
+type MissingFieldError <: ImportException
 end
-type ShortSequenceError <: ImportError
+type ShortSequenceError <: ImportException
 end
-type TooFewTaxaError <: ImportError
+type TooFewTaxaError <: ImportException
 end
-type UnknownTaxonError <: ImportError
+type UnknownTaxonError <: ImportException
 end
