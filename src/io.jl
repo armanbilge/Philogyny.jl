@@ -1,20 +1,22 @@
-# Importer.jl
-#
+# io.jl
 # Philogyny: Phylogenetics for the love of Julia
 
 abstract Importer
-# Assumed fields:
-# reader::IOBuffer
-# comment_writer::IOBuffer
-# last_char::Char
-# last_delimiter::Char
-# has_comments::Bool
-# start_comment::Char
-# stop_comment::Char
-# line_comment::Char
-# write_comment::Char
-# meta_comment::Char
-# last_meta_comment::String
+# Expected fields:
+#     reader::IOBuffer
+#     comment_writer::IOBuffer
+#     last_char::Char
+#     last_delimiter::Char
+#     has_comments::Bool
+#     start_comment::Char
+#     stop_comment::Char
+#     line_comment::Char
+#     write_comment::Char
+#     meta_comment::Char
+#     last_meta_comment::String
+
+const IO_EMPTY_SET = Set{Char}()
+const IO_NULL_COMMENT_WRITER = IOBuffer(false, false)
 
 function next_character(importer::Importer)
     if importer.last_char == '\0'
@@ -103,10 +105,10 @@ function read_sequence(importer::Importer, sequence::IOBuffer,
             end
             if !isspace(ch)
                 ch1::Char = ch
-                if issubset(ch, gap_characters)
-                    ch1 = GAP_CHARACTER
+                if issubset(ch, DATA_TYPE_GAP_CHARACTERs)
+                    ch1 = DATA_TYPE_GAP_CHARACTER
                 elseif issubset(ch, missing_characters)
-                    ch1 = UNKNOWN_CHARACTER
+                    ch1 = DATA_TYPE_UNKNOWN_CHARACTER
                 elseif issubset(ch, match_characters)
                     if match_sequence == None
                         throw ImportError("Match character in first sequences")
@@ -155,10 +157,10 @@ function read_sequence_line(importer::Importer, sequence::IOBuffer, data_type::D
             end
             if !isspace(ch)
                 ch1 == ch
-                if issubset(ch, gap_characters)
-                    ch1 = GAP_CHARACTER
+                if issubset(ch, DATA_TYPE_GAP_CHARACTERs)
+                    ch1 = DATA_TYPE_GAP_CHARACTER
                 elseif issubset(ch, missing_characters)
-                    ch1 = UNKNOWN_CHARACTER
+                    ch1 = DATA_TYPE_UNKNOWN_CHARACTER
                 elseif issubset(ch, match_characters)
                     if match_sequence == None
                         throw(ImportError("Match character in first sequences"))
@@ -322,7 +324,7 @@ end
 function skip_comments(importer::Importer, delimiter::Char)
     n = 1
     write = false
-    meta = IOBuffer(false, false)
+    meta = IO_NULL_COMMENT_WRITER
     next_char = next_character(importer)
     if next_char == importer.write_comment
         read(importer)
@@ -418,14 +420,111 @@ function skip_until(importer::Importer, skip::Set{Char})
 end
 
 abstract SequenceImporter <: Importer
+# Expected methods:
+#     import_alignment(importer::SequenceImporter)
+#     import_sequences(importer::SequenceImporter)
+
 abstract TreeImporter <: Importer
+# Expected methods:
+#     has_tree(importer::TreeImporter)
+#     import_next_tree(importer::TreeImporter)
+#     import_tree(importer::TreeImporter, taxa::Vector{Taxon})
+#     import_trees(importer::TreeImporter, taxa::Vector{Taxon})
 
-type FastaImporter <: SequenceImporter
+type FASTAImporter <: SequenceImporter
+    reader::IOBuffer
+    comment_writer::IOBuffer
+    last_char::Char
+    last_delimiter::Char
+    has_comments::Bool
+    start_comment::Char
+    stop_comment::Char
+    line_comment::Char
+    write_comment::Char
+    meta_comment::Char
+    last_meta_comment::String
+    data_type::DataType
+end
 
+const FASTA_FIRST_CHAR = '>'
+const FASTA_GAP = Set('-')
+const FASTA_MISSING = Set('?')
+
+function FASTAImporter(reader::IOBuffer, data_type::DataType)
+    FASTAImporter(reader, IO_NULL_COMMENT_WRITER, data_type)
+end
+
+function FASTAImporter(reader::IOBuffer, comment_writer::IOBuffer, data_type::DataType)
+    FASTAImporter(reader, comment_writer, '\0', '\0', true, '\0', '\0', '\0',
+                      char(-1), char(-1), "\0", data_type)
+end
+
+function import_alignment(importer::FASTAImporter)
+    alignment = SimpleAlignment()
+    try
+        while read(importer) != FASTA_FIRST_CHAR
+        end
+        doing = true
+        while doing
+            name = strip(readline(importer))
+            seq = IOBuffer(false, true)
+            read_sequence(seq, importer.data_type, string(FASTA_FIRST_CHAR), seq.maxsize,
+                              IMPORTER_EMTPY_SET, "")
+            add_sequence(alignment, Sequence(Taxon(name), takebuf_string(seq)))
+            doing = get_last_delimiter(importer) == FASTA_FIRST_CHAR
+        end
+    catch ex
+        if !isa(ex, EOFError)
+            throw(ex)
+        end
+    end
+    return alignment
+end
+
+function import_sequences(importer::FASTAImporter)
+    import_alignment(importer)
 end
 
 type NewickImporter <: TreeImporter
+    reader::IOBuffer
+    comment_writer::IOBuffer
+    last_char::Char
+    last_delimiter::Char
+    has_comments::Bool
+    start_comment::Char
+    stop_comment::Char
+    line_comment::Char
+    write_comment::Char
+    meta_comment::Char
+    last_meta_comment::String
+end
 
+const NEWICK_COMMENT = "comment"
+
+function NewickImporter(reader::IOBuffer)
+    NewickImporter(reader, IO_NULL_COMMENT_WRITER, '\0', '\0', true, '[', ']', '\0',
+                       '\0', '&', "\0")
+end
+
+function NewickImporter(tree_string::String)
+    NewickImporter(IOBuffer(tree_string))
+end
+
+function import_tree(importer::NewickImporter, taxa::Vector{Taxon})
+    try
+        skip_until(importer, Set('('))
+        root = read_internal_node(importer, taxa)
+        if importer.last_meta_comment != "\0"
+            set_attribute(root, NEWICK_COMMENT, importer.last_meta_comment)
+        end
+        return FlexibleTree(root, false, true)
+    catch ex
+        if isa(ex, EOFError)
+            throw(ImportError("Incomplete tree"))
+        else
+            throw(ex)
+        end
+    end
 end
 
 type NexusImporter <: Union(SequenceImporter,TreeImporter)
@@ -439,26 +538,29 @@ end
 # Errors
 abstract ImportException <: Exception
 type ImportError <: ImportException
-msg::String
+    msg::String
 end
 type DuplicateFieldError <: ImportException
-msg::String
+    msg::String
 end
 type BadFormatError <: ImportException
-msg::String
+    msg::String
 end
 type UnparsableDataError <: ImportException
-msg::String
+    msg::String
 end
 type MissingFieldError <: ImportException
-msg::String
+    msg::String
 end
 type ShortSequenceError <: ImportException
-msg::String
+    msg::String
 end
 type TooFewTaxaError <: ImportException
-msg::String
+    msg::String
 end
 type UnknownTaxonError <: ImportException
-msg::String
+    msg::String
+end
+type BranchMissingError <: ImportException
+    msg::String
 end
